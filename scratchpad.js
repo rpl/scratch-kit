@@ -6,6 +6,8 @@ let SCRATCHKIT_URI = 'resource:///modules/devtools/scratchpad-manager.jsm'
 let { Cu } = require('chrome')
 let { ScratchpadManager } = Cu.import(SCRATCHKIT_URI)
 
+let { Promise: promise } = Cu.import("resource://gre/modules/Promise.jsm", {});
+
 function Scratchpad(options) {
   let { sandbox, text, filename, unload, open } = options
   let window = ScratchpadManager.openScratchpad({
@@ -25,13 +27,20 @@ function Scratchpad(options) {
 
     // Monkey patch scratchpad
     Object.defineProperties(scratchpad, {
-      chromeSandbox: {
+      evaluate: {
         configurable: true,
-        get: function() { return sandbox }
-      },
-      contentSandbox: {
-        configurable: true,
-        get: function() { return sandbox }
+        value: function (aString) {
+        let deferred = promise.defer();
+
+        try {
+          deferred.resolve([aString, undefined, sandbox.eval(aString)]);
+        } catch(e) {
+          console.log("ERROR*************", e);
+          deferred.resolve([aString, e]);
+        }
+
+        return deferred.promise;
+        }
       },
       openScratchpad: {
         configurable: true,
@@ -39,14 +48,16 @@ function Scratchpad(options) {
           return open.call(this)
         }
       },
-      writeAsComment: {
+      display: {
         configurable: true,
-        value: function(value) {
-          let result = JSON.stringify(value, function(key, value) {
-            return typeof(value) === 'function' ? String(value).replace(/{[\s\S]*}/g, '{ /* ... */ }') :
-                   value
-          }, 2)
-          return writeAsComment.call(this, result)
+        value: function () {
+          this.execute().then(([aString, aError, aResult]) => {
+            if (aError) {
+              this.writeAsComment(aError);
+            } else {
+              this.writeAsComment(aResult);
+            }
+          });
         }
       }
     })
